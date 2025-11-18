@@ -22,6 +22,40 @@ export const useMeterStore = defineStore('meter', () => {
     return Array.isArray(treeData.value) ? treeData.value : [treeData.value]
   })
 
+  //
+  const sourceType = ref('api') // 'api' | 'local' | 'default'
+
+  // -----------------------------
+  // set defasult tree (for demo)
+  // -----------------------------
+  // 預設的樹狀資料（取消時使用）
+  const defaultTree = [
+    {
+      id: 'root',
+      name: '預設節點',
+      children: [
+        {
+          id: 'group-1',
+          name: '分組 1',
+          children: [
+            { id: 'm-1', name: '電錶 A' },
+            { id: 'm-2', name: '電錶 B' },
+          ],
+        },
+        {
+          id: 'group-2',
+          name: '分組 2',
+          children: [{ id: 'm-3', name: '電錶 C' }],
+        },
+      ],
+    },
+  ]
+
+  const setDefaultTree = () => {
+    treeData.value = JSON.parse(JSON.stringify(defaultTree))
+    parentMap.value = utils.buildParentMapFromTree(treeData.value)
+    sourceType.value = 'default'
+  }
   // -----------------------------
   // localStorage
   // -----------------------------
@@ -33,6 +67,7 @@ export const useMeterStore = defineStore('meter', () => {
       const data = JSON.parse(raw)
       treeData.value = data
       parentMap.value = utils.buildParentMapFromTree(data)
+      sourceType.value = 'local'
       return true
     } catch (e) {
       console.error('[LocalStorage] 解析失敗', e)
@@ -54,6 +89,8 @@ export const useMeterStore = defineStore('meter', () => {
       // 存 localStorage 快取
       localStorage.setItem(LS_KEY, JSON.stringify(treeData.value))
 
+      sourceType.value = 'api'
+
       return true
     } catch (e) {
       console.warn(`[API] 無法取得資料，將嘗試使用 localStorage 快取`, e)
@@ -64,11 +101,19 @@ export const useMeterStore = defineStore('meter', () => {
   }
 
   const init = async () => {
+    // 清除treeData，避免殘留舊資料
+    treeData.value = []
+    parentMap.value = new Map()
+    selectedIds.value = []
+    selectedNodes.value = []
+    selectedParentId.value = null
+
+    // 依序嘗試從 API、localStorage 載入
     const ok = await loadFromApi()
     if (ok) return { ok: true, source: 'api' }
 
     const localOk = loadFromLocal()
-    if (localOk) return { ok: true, source: 'cache' }
+    if (localOk) return { ok: true, source: 'local' }
 
     return { ok: false, source: 'none', error: '無法取得任何資料' }
   }
@@ -142,14 +187,24 @@ export const useMeterStore = defineStore('meter', () => {
     const check = canMoveTo(targetParentId)
     if (!check.ok) throw new Error(check.reason)
 
+    //預設樹，直接在前端移動
+    if (sourceType.value === 'default') {
+      utils.moveNodesInTree(treeData.value, selectedIds.value, targetParentId)
+      parentMap.value = utils.buildParentMapFromTree(treeData.value)
+      resetSelection()
+      return
+    }
+
+    // 呼叫後端 API 移動
     const { data } = await nodeService.moveNodes({
       targetParentId: targetParentId ?? null,
       nodeIds: selectedIds.value,
     })
     if (!data?.success) throw new Error(data?.error || '移動失敗')
 
-    // 成功後重新從後端為準，重整抓樹
+    // 成功後從後端重整抓樹
     await loadFromApi()
+
     resetSelection()
   }
 
@@ -165,7 +220,7 @@ export const useMeterStore = defineStore('meter', () => {
 
     // lifecycle
     init,
-    loadFromApi,
+    setDefaultTree,
 
     // selection & move
     toggleSelect,

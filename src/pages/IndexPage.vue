@@ -26,7 +26,7 @@
 import { onMounted, ref, computed } from 'vue'
 import { useQuasar } from 'quasar'
 import { useMeterStore } from 'src/stores/meter'
-import api, { setBaseURL } from 'src/services/api'
+import api, { baseURLRef, setBaseURL } from 'src/services/api'
 
 import MeterTree from 'src/components/MeterTree.vue'
 import MoveDialog from 'src/components/MoveDialog.vue'
@@ -38,7 +38,7 @@ const dialogOpen = ref(false)
 const ready = ref(!!localStorage.getItem('serverUrl')) // 取得到再渲染畫面
 
 // 顯示目前的連線 URL
-const serverUrlText = computed(() => api.defaults.baseURL || '(未設定)')
+const serverUrlText = computed(() => baseURLRef.value || '(未設定)')
 
 // 讓 Quasar Dialog 可用 await
 const askServer = () =>
@@ -50,7 +50,8 @@ const askServer = () =>
         model: localStorage.getItem('serverUrl') || 'http://localhost:3001',
         type: 'text',
       },
-      cancel: true,
+      cancel: '使用預設樹', // 這裡改成你要的文字
+      ok: '確定',
       persistent: true,
     })
       .onOk((v) => resolve({ ok: true, url: v }))
@@ -58,8 +59,7 @@ const askServer = () =>
   })
 
 const loadData = async () => {
-  // store.init()：先呼叫API 若失敗再抓localStorage
-  const res = await store.init()
+  const res = await store.init() // 先呼叫API 若失敗再抓localStorage
   if (res.ok) {
     const serverUrl = api.defaults.baseURL
     $q.notify({
@@ -74,35 +74,55 @@ const loadData = async () => {
     $q.notify({ type: 'negative', message: res.error || '資料載入失敗' })
   }
 }
+// 使用預設樹狀資料
+const applyDefaultTree = () => {
+  store.setDefaultTree()
+  $q.notify({ type: 'info', message: '使用預設樹狀資料' })
+}
 
 // 變更伺服器按鈕
 const changeServer = async () => {
   const { ok, url } = await askServer()
-  if (!ok || !url) return
-  setBaseURL(url)
-  $q.notify({ type: 'info', message: `已切換伺服器：${api.defaults.baseURL}` })
-  // 重新抓資料
-  await loadData()
+
+  if (ok) {
+    if (url === api.defaults.baseURL) {
+      // 沒變更就不動作
+      $q.notify({ type: 'info', message: '伺服器未變更' })
+    } else {
+      setBaseURL(url)
+      $q.notify({ type: 'info', message: `已切換伺服器：${api.defaults.baseURL}` })
+      // 重新抓資料
+      await loadData()
+    }
+  } else {
+    // 使用者取消就用預設樹狀資料`
+    applyDefaultTree()
+    // 刪除目前的 baseURL
+    localStorage.removeItem('serverUrl')
+  }
+
+  ready.value = true
 }
 
 onMounted(async () => {
-  // localStorage若沒有serverUrl，跳對話框詢問
-  if (!localStorage.getItem('serverUrl')) {
-    const { ok, url } = await askServer()
-    if (ok && url) {
-      setBaseURL(url)
-      ready.value = true
-      await loadData()
-      return
-    }
-    // 使用者取消就直接用預設的serverUrl
+  // 有serverUrl就直接載入
+  if (localStorage.getItem('serverUrl')) {
     ready.value = true
     await loadData()
     return
   }
 
-  // 有serverUrl就直接載入
+  const { ok, url } = await askServer()
+
+  if (ok && url) {
+    setBaseURL(url)
+    console.log('設定伺服器為', api.defaults.baseURL)
+    await loadData()
+  } else {
+    // 使用者取消就用預設樹狀資料`
+    applyDefaultTree()
+  }
+
   ready.value = true
-  await loadData()
 })
 </script>
